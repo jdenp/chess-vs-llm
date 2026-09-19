@@ -1,0 +1,217 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>chess vs llm</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root { --bg:#1c1e22; --panel:#25282e; --light:#e8d5b0; --dark:#7a5c3e; --accent:#e0b34c; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:#ddd; font:15px/1.4 system-ui, sans-serif; }
+#wrap { display:flex; gap:16px; padding:16px; align-items:flex-start; justify-content:center; flex-wrap:wrap; }
+#board { display:grid; grid-template-columns:repeat(8, 1fr); width:min(78vh, 560px); aspect-ratio:1; border:3px solid #000; user-select:none; }
+.sq { position:relative; display:flex; align-items:center; justify-content:center; }
+.sq.light { background:var(--light); }
+.sq.dark { background:var(--dark); }
+.sq .pc { font-size:min(9vh, 52px); line-height:1; }
+.sq.w .pc { color:#fff; text-shadow:0 0 3px #000, 0 2px 3px rgba(0,0,0,.8); }
+.sq.b .pc { color:#141414; text-shadow:0 0 2px rgba(255,255,255,.25), 0 1px 2px rgba(0,0,0,.5); }
+.sq.clickable { cursor:pointer; }
+.sq.sel { outline:3px solid var(--accent); outline-offset:-3px; }
+.sq.last::before { content:""; position:absolute; inset:0; background:rgba(224,179,76,.35); }
+.sq.chk::before { content:""; position:absolute; inset:0; background:radial-gradient(circle, rgba(217,72,59,.85) 25%, transparent 75%); }
+.sq.dot::after { content:""; position:absolute; left:50%; top:50%; width:26%; height:26%; transform:translate(-50%,-50%); border-radius:50%; background:rgba(224,179,76,.7); }
+.sq.capture::after { content:""; position:absolute; inset:5%; border-radius:50%; border:4px solid rgba(0,0,0,.4); }
+.coord { position:absolute; font-size:11px; opacity:.7; pointer-events:none; }
+.coord.file { right:3px; bottom:1px; }
+.coord.rank { left:3px; top:1px; }
+#side { width:330px; display:flex; flex-direction:column; gap:10px; }
+#status { font-weight:600; min-height:24px; }
+#status .think { color:var(--accent); }
+#chat { height:min(46vh, 420px); overflow-y:auto; background:var(--panel); border-radius:8px; padding:8px; display:flex; flex-direction:column; gap:6px; }
+.msg { padding:6px 8px; border-radius:6px; white-space:pre-wrap; word-break:break-word; }
+.msg.llm { background:#3d3a2f; }
+.msg.sys { background:#2c2c34; color:#aaa; font-size:13px; }
+button { background:var(--accent); color:#111; border:0; padding:8px 14px; border-radius:6px; font-weight:600; cursor:pointer; }
+#model { font-size:12px; color:#888; word-break:break-all; }
+#promo { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; }
+#promo.on { display:flex; }
+#promoBox { background:var(--panel); border-radius:10px; padding:14px; display:flex; gap:10px; }
+#promoBox span { font-size:46px; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.9); cursor:pointer; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="board"></div>
+  <div id="side">
+    <div id="status">loading…</div>
+    <div id="chat"></div>
+    <button id="new">New game</button>
+    <div id="model"></div>
+  </div>
+</div>
+<div id="promo"><div id="promoBox"></div></div>
+<script>
+"use strict";
+const GLYPH = {
+  w: { p: "♙", n: "♘", b: "♗", r: "♖", q: "♕", k: "♔" },
+  b: { p: "♟", n: "♞", b: "♝", r: "♜", q: "♛", k: "♚" }
+};
+const FILES = "abcdefgh";
+let state = null, sel = null, busy = false, shownChat = -1, lastFen = null;
+const $ = (id) => document.getElementById(id);
+
+function fenSquares(fen) {
+  const out = [];
+  for (const rank of fen.split(" ")[0].split("/")) {
+    for (const c of rank) {
+      if (c >= "1" && c <= "8") for (let i = 0; i < +c; i++) out.push(null);
+      else out.push(c);
+    }
+  }
+  return out;
+}
+
+function kingSq() {
+  const target = state.turn === "w" ? "K" : "k";
+  return fenSquares(state.fen).indexOf(target);
+}
+
+function render() {
+  const board = $("board");
+  board.innerHTML = "";
+  if (!state) return;
+  const sqs = fenSquares(state.fen);
+  const legal = state.legal || [];
+  // legal destinations for the selected square; uci() is 4 chars, 8 for promotions
+  const myLegal = sel ? new Set(legal.filter(u => u.startsWith(sel)).map(u => u.slice(2, 4))) : new Set();
+  const checkSq = state.in_check ? kingSq() : -1;
+  for (let i = 0; i < 64; i++) {
+    const rank = 8 - Math.floor(i / 8);
+    const file = i % 8;
+    const uci = FILES[file] + rank;
+    const el = document.createElement("div");
+    el.className = "sq " + ((rank + file) % 2 === 0 ? "light" : "dark");
+    const p = sqs[i];
+    if (p) {
+      // FEN: uppercase = white, lowercase = black
+      const w = p !== p.toLowerCase();
+      el.classList.add(w ? "w" : "b");
+      const pc = document.createElement("span");
+      pc.className = "pc";
+      pc.textContent = GLYPH[w ? "w" : "b"][p.toLowerCase()];
+      el.appendChild(pc);
+    }
+    if (sel === uci) el.classList.add("sel");
+    if (state.last_move && (state.last_move.from === uci || state.last_move.to === uci))
+      el.classList.add("last");
+    if (checkSq === i) el.classList.add("chk");
+    if (myLegal.has(uci)) el.classList.add(p ? "capture" : "dot");
+    if (!state.game_over && state.turn === "w" && (myLegal.has(uci) || (p && p !== p.toLowerCase())))
+      el.classList.add("clickable");
+    if (file === 0) { const r = document.createElement("span"); r.className = "coord rank"; r.textContent = rank; el.appendChild(r); }
+    if (rank === 1) { const f = document.createElement("span"); f.className = "coord file"; f.textContent = FILES[file]; el.appendChild(f); }
+    el.addEventListener("click", () => onSquare(uci, p));
+    board.appendChild(el);
+  }
+}
+
+function onSquare(uci, p) {
+  if (busy || !state || state.game_over || state.turn !== "w") return;
+  if (sel === uci) { sel = null; render(); return; }
+  if (sel && (state.legal || []).some(u => u.startsWith(sel + uci))) {
+    if (sel[1] === "7" && uci[1] === "8") { showPromo(sel, uci); return; }
+    const from = sel;
+    sel = null;
+    doMove(from, uci, null);
+    return;
+  }
+  sel = (p && p !== p.toLowerCase()) ? uci : null;
+  render();
+}
+
+function showPromo(from, to) {
+  const box = $("promoBox");
+  box.innerHTML = "";
+  for (const piece of ["q", "r", "b", "n"]) {
+    const s = document.createElement("span");
+    s.textContent = GLYPH.w[piece];
+    s.addEventListener("click", () => { hidePromo(); sel = null; doMove(from, to, piece); });
+    box.appendChild(s);
+  }
+  $("promo").classList.add("on");
+}
+
+function hidePromo() { $("promo").classList.remove("on"); }
+
+function doMove(from, to, promo) {
+  busy = true;
+  render();
+  $("status").innerHTML = 'LLM is thinking… <span class="think"></span>';
+  fetch("/api/move", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ from, to, promotion: promo || null })
+  })
+    .then(r => r.json().then(j => ({ ok: r.ok, j })))
+    .then(({ ok, j }) => { if (!ok) addMsg("sys", j.error || "move failed"); })
+    .catch(e => addMsg("sys", "request failed: " + e))
+    .finally(() => { busy = false; poll(true); });
+}
+
+function addMsg(who, text) {
+  const d = document.createElement("div");
+  d.className = "msg " + who;
+  d.textContent = text;
+  const chat = $("chat");
+  chat.appendChild(d);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function renderChat(chat) {
+  const el = $("chat");
+  el.innerHTML = "";
+  chat.forEach(m => addMsg(m.who, m.text));
+}
+
+function setStatus() {
+  const s = $("status");
+  if (state.game_over) {
+    const r = state.result || {};
+    s.textContent = r.winner === "w" ? "You win! (" + r.reason + ")"
+                    : r.winner === "b" ? "LLM wins! (" + r.reason + ")"
+                    : "Draw (" + r.reason + ")";
+  } else if (state.thinking || state.turn === "b") {
+    s.innerHTML = 'LLM is thinking… <span class="think">…</span>';
+  } else {
+    s.textContent = "Your move (white)";
+  }
+}
+
+async function poll(force) {
+  if (busy && !force) return;
+  try {
+    const s = await (await fetch("/api/state")).json();
+    if (s.fen !== lastFen || s.chat.length !== shownChat || (state && s.game_over !== state.game_over) || !state) {
+      if (shownChat === -1) renderChat(s.chat);
+      else for (let i = shownChat; i < s.chat.length; i++) addMsg(s.chat[i].who, s.chat[i].text);
+      shownChat = s.chat.length;
+      lastFen = s.fen;
+      state = s;
+      if (state.game_over) sel = null;
+      render();
+      setStatus();
+      $("model").textContent = "model: " + s.model;
+    }
+  } catch (e) { /* server briefly down, next poll retries */ }
+}
+
+$("new").addEventListener("click", () => {
+  fetch("/api/new", { method: "POST" }).then(() => poll(true)).catch(() => {});
+});
+
+setInterval(poll, 2000);
+poll(true);
+</script>
+</body>
+</html>

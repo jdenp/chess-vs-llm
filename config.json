@@ -1,0 +1,7 @@
+{
+  "base_url": "http://127.0.0.1:8082",
+  "api_key": "",
+  "model": "",
+  "max_context": 131072,
+  "port": 8090
+}
