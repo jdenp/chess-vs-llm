@@ -216,7 +216,6 @@ function setStatus() {
 }
 
 async function poll(force) {
-  if (busy && !force) return;
   try {
     const s = await (await fetch("/api/state")).json();
     if (s.fen !== lastFen || s.chat.length !== shownChat || (state && s.game_over !== state.game_over) || !state) {
