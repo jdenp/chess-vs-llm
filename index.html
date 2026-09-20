@@ -9,7 +9,7 @@
 * { box-sizing: border-box; }
 body { margin:0; background:var(--bg); color:#ddd; font:15px/1.4 system-ui, sans-serif; }
 #wrap { display:flex; gap:16px; padding:16px; align-items:flex-start; justify-content:center; flex-wrap:wrap; }
-#board { display:grid; grid-template-columns:repeat(8, 1fr); width:min(78vh, 560px); aspect-ratio:1; border:3px solid #000; user-select:none; }
+#board { display:grid; grid-template-columns:repeat(8, 1fr); grid-template-rows:repeat(8, 1fr); width:min(78vh, 560px); aspect-ratio:1; border:3px solid #000; user-select:none; }
 .sq { position:relative; display:flex; align-items:center; justify-content:center; }
 .sq.light { background:var(--light); }
 .sq.dark { background:var(--dark); }
