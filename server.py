@@ -35,7 +35,7 @@ Board format: 8 rows for ranks 8 down to 1, 8 columns for files a to h.
 White pieces are uppercase (P N B R Q K), black pieces are lowercase (p n b r q k), '.' is empty.
 Reply with EXACTLY two lines and nothing else:
 MOVE: <one move in UCI notation, e.g. e7e5; when promoting write e7e8q>
-COMMENT: <one short fun sentence about anything you like. Never reveal your plan and never hint the human about the game>"""
+COMMENT: <one short sentence of game commentary. Never reveal your plan and never hint the human about the game>"""
 
 MOVE_RE = re.compile(r"MOVE:\s*([A-Za-z0-9=]+)", re.I)
 UCI_RE = re.compile(r"^[a-h][1-8][a-h][1-8][qrbn]?$")
