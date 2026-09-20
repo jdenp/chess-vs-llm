@@ -162,23 +162,27 @@ def _http(path, body=None):
 
 
 def llm_chat(messages):
+    """Returns (content, reasoning)."""
     body = json.dumps({"model": model_name() or "default",
                        "messages": messages,
                        "temperature": 0.8,
-                       "max_tokens": MAX_TOKENS}).encode()
+                       "max_tokens": MAX_TOKENS,
+                       "chat_template_kwargs": {"reasoning_effort": "medium"}}).encode()
     data = _http("/v1/chat/completions", body)
-    return data["choices"][0]["message"].get("content") or ""
+    msg = data["choices"][0]["message"]
+    reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
+    return msg.get("content") or "", reasoning
 
 
 def llm_turn(b):
-    """Ask the LLM for a move. Returns (move, comment). Never returns an illegal move."""
+    """Ask the LLM for a move. Returns (move, comment, reasoning). Never returns an illegal move."""
     last_err = None
     user_msg = turn_prompt(b)
     msgs = trim([{"role": "system", "content": SYSTEM}] + state["hist"]
                 + [{"role": "user", "content": user_msg}])
     for _ in range(RETRIES):
         try:
-            content = llm_chat(msgs)
+            content, reasoning = llm_chat(msgs)
         except Exception as e:
             last_err = e
             break
@@ -187,7 +191,7 @@ def llm_turn(b):
             state["hist"].append({"role": "user", "content": user_msg})
             state["hist"].append({"role": "assistant",
                                   "content": clean_text(content)[:500] or "(no comment)"})
-            return move, parse_comment(content)
+            return move, parse_comment(content), reasoning
         token = MOVE_RE.search(content)
         token = token.group(1) if token else "(none found)"
         msgs.append({"role": "assistant", "content": clean_text(content)[:500]})
@@ -196,7 +200,7 @@ def llm_turn(b):
                                 f"Reply again with exactly the two lines MOVE and COMMENT."})
     m = random.choice(list(b.legal_moves))
     note = f" (llm call failed: {last_err})" if last_err else ""
-    return m, f"so many illegal moves, going random{note}"
+    return m, f"so many illegal moves, going random{note}", ""
 
 
 def game_result(b):
@@ -225,10 +229,11 @@ def closing_comment(b, res):
     prompt = (f"Game over: {res['reason']}. {outcome} "
               f"Write one short closing comment about the game. No MOVE line.")
     try:
-        return clean_text(llm_chat([{"role": "system", "content": SYSTEM},
-                                    {"role": "user", "content": prompt}]))[:300]
+        text, reasoning = llm_chat([{"role": "system", "content": SYSTEM},
+                                    {"role": "user", "content": prompt}])
+        return clean_text(text)[:300], reasoning
     except Exception as e:
-        return f"(llm unreachable: {e})"
+        return f"(llm unreachable: {e})", ""
 
 
 def pub_state():
@@ -285,20 +290,22 @@ def handle_move(data):
 
         res = game_result(b)
         if res is None:
-            m2, comment = llm_turn(b)
+            m2, comment, reasoning = llm_turn(b)
             b.push(m2)
             state["last_move"] = {"from": chess.square_name(m2.from_square),
                                   "to": chess.square_name(m2.to_square)}
-            state["chat"].append({"who": "llm", "text": comment})
+            state["chat"].append({"who": "llm", "text": comment,
+                                  "reasoning": reasoning or None})
             res = game_result(b)
         if res is not None:
             state["result"] = res
             headline = {"w": "You win!", "b": "LLM wins!"}.get(res["winner"], "Draw.")
             state["chat"].append({"who": "sys",
                                   "text": f"{headline} ({res['reason']})"})
-            closing = closing_comment(b, res)
+            closing, closing_reason = closing_comment(b, res)
             if closing:
-                state["chat"].append({"who": "llm", "text": closing})
+                state["chat"].append({"who": "llm", "text": closing,
+                                      "reasoning": closing_reason or None})
         state["thinking"] = False
         snapshot = pub_state()
         return 200, snapshot

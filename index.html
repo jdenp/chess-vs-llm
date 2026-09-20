@@ -32,6 +32,11 @@ body { margin:0; background:var(--bg); color:#ddd; font:15px/1.4 system-ui, sans
 .msg { padding:6px 8px; border-radius:6px; white-space:pre-wrap; word-break:break-word; }
 .msg.llm { background:#3d3a2f; }
 .msg.sys { background:#2c2c34; color:#aaa; font-size:13px; }
+#reasonToggle { font-size:13px; color:#aaa; display:flex; gap:6px; align-items:center; cursor:pointer; user-select:none; }
+.msg .reason { font-size:13px; color:#9a9a86; margin-bottom:6px; }
+.msg .reason summary { cursor:pointer; color:#8a8a7a; font-size:12px; }
+.reasonText { max-height:140px; overflow-y:auto; white-space:pre-wrap; word-break:break-word; background:#2a2820; border-radius:4px; padding:6px; margin-top:4px; }
+#chat.noreason .reason { display:none; }
 button { background:var(--accent); color:#111; border:0; padding:8px 14px; border-radius:6px; font-weight:600; cursor:pointer; }
 #model { font-size:12px; color:#888; word-break:break-all; }
 #promo { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; }
@@ -45,6 +50,7 @@ button { background:var(--accent); color:#111; border:0; padding:8px 14px; borde
   <div id="board"></div>
   <div id="side">
     <div id="status">loading…</div>
+    <label id="reasonToggle"><input type="checkbox" id="showReasoning" checked> show reasoning</label>
     <div id="chat"></div>
     <button id="new">New game</button>
     <div id="model"></div>
@@ -159,10 +165,24 @@ function doMove(from, to, promo) {
     .finally(() => { busy = false; poll(true); });
 }
 
-function addMsg(who, text) {
+function addMsg(who, text, reasoning) {
   const d = document.createElement("div");
   d.className = "msg " + who;
-  d.textContent = text;
+  if (who === "llm" && reasoning) {
+    const r = document.createElement("details");
+    r.className = "reason";
+    r.open = true;
+    const s = document.createElement("summary");
+    s.textContent = "reasoning";
+    const t = document.createElement("div");
+    t.className = "reasonText";
+    t.textContent = reasoning;
+    r.append(s, t);
+    d.appendChild(r);
+  }
+  const tx = document.createElement("div");
+  tx.textContent = text;
+  d.appendChild(tx);
   const chat = $("chat");
   chat.appendChild(d);
   chat.scrollTop = chat.scrollHeight;
@@ -171,8 +191,12 @@ function addMsg(who, text) {
 function renderChat(chat) {
   const el = $("chat");
   el.innerHTML = "";
-  chat.forEach(m => addMsg(m.who, m.text));
+  chat.forEach(m => addMsg(m.who, m.text, m.reasoning));
 }
+
+$("showReasoning").addEventListener("change", () => {
+  $("chat").classList.toggle("noreason", !$("showReasoning").checked);
+});
 
 function setStatus() {
   const s = $("status");
@@ -195,7 +219,7 @@ async function poll(force) {
     if (s.fen !== lastFen || s.chat.length !== shownChat || (state && s.game_over !== state.game_over) || !state) {
       // shrink (new game, server restart) or first load: re-render whole chat
       if (shownChat === -1 || s.chat.length < shownChat) renderChat(s.chat);
-      else for (let i = shownChat; i < s.chat.length; i++) addMsg(s.chat[i].who, s.chat[i].text);
+      else for (let i = shownChat; i < s.chat.length; i++) addMsg(s.chat[i].who, s.chat[i].text, s.chat[i].reasoning);
       shownChat = s.chat.length;
       lastFen = s.fen;
       state = s;
