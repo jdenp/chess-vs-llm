@@ -7,6 +7,7 @@ import os
 import random
 import re
 import threading
+import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -29,6 +30,7 @@ LLM_TIMEOUT = 300  # seconds, thinking 27B can be slow
 lock = threading.Lock()
 state = {}
 snapshot = {}
+SERVER = None
 
 SYSTEM = """You are playing chess against a human. You play black, the human plays white.
 Board format: 8 rows for ranks 8 down to 1, 8 columns for files a to h.
@@ -350,6 +352,10 @@ class Handler(BaseHTTPRequestHandler):
             with lock:
                 new_game()
             self._send(200, snapshot)
+        elif self.path == "/api/exit":
+            self._send(200, {"ok": True})
+            if SERVER is not None:
+                threading.Thread(target=_shutdown_later, args=(SERVER,), daemon=True).start()
         elif self.path == "/api/move":
             code, obj = handle_move(data)
             self._send(code, obj)
@@ -357,10 +363,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
 
 
+def _shutdown_later(httpd):
+    time.sleep(0.3)  # let the exit response flush first
+    httpd.shutdown()
+
+
 def main():
+    global SERVER
     new_game()
     print(f"chess-vs-llm: http://127.0.0.1:{PORT}  llm: {BASE_URL} ({model_name()})", flush=True)
-    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    SERVER = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    SERVER.serve_forever()
 
 
 if __name__ == "__main__":
