@@ -193,7 +193,8 @@ async function poll(force) {
   try {
     const s = await (await fetch("/api/state")).json();
     if (s.fen !== lastFen || s.chat.length !== shownChat || (state && s.game_over !== state.game_over) || !state) {
-      if (shownChat === -1) renderChat(s.chat);
+      // shrink (new game, server restart) or first load: re-render whole chat
+      if (shownChat === -1 || s.chat.length < shownChat) renderChat(s.chat);
       else for (let i = shownChat; i < s.chat.length; i++) addMsg(s.chat[i].who, s.chat[i].text);
       shownChat = s.chat.length;
       lastFen = s.fen;
